@@ -26,7 +26,7 @@ import (
 )
 
 const APP_NAME = "procon-gardener"
-const ATCODER_API_SUBMISSION_URL = "https://kenkoooo.com/atcoder/atcoder-api/results?user="
+const ATCODER_API_SUBMISSION_URL = "https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user="
 
 type AtCoderSubmission struct {
 	ID            int     `json:"id"`
@@ -337,29 +337,39 @@ func archiveFile(code, fileName, path string, submission AtCoderSubmission) erro
 	return nil
 }
 
-func archiveCmd() {
+func archiveCmd(unixSecond int64) (bool, int64) {
 	config, err := loadConfig()
 	if err != nil {
 		log.Println(err)
-		return
+		return false, 0
 	}
-	resp, err := http.Get(ATCODER_API_SUBMISSION_URL + config.Atcoder.UserID)
+	resp, err := http.Get(ATCODER_API_SUBMISSION_URL + config.Atcoder.UserID + "&from_second=" + strconv.FormatInt(unixSecond, 10))
 	if err != nil {
 		log.Println(err)
-		return
+		return false, 0
 	}
 	defer resp.Body.Close()
 	bytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Println(err)
-		return
+		return false, 0
 	}
 	var ss []AtCoderSubmission
 	err = json.Unmarshal(bytes, &ss)
 	if err != nil {
 		log.Println(err)
-		return
+		return false, 0
 	}
+
+	//rev sort by EpochSecond
+	sort.Slice(ss, func(i, j int) bool {
+		return ss[i].EpochSecond > ss[j].EpochSecond
+	})
+
+	if len(ss) == 0 {
+		return false, 0
+	}
+	lastSubmissionEpochSecond := ss[0].EpochSecond
 
 	//only ac
 	ss = funk.Filter(ss, func(s AtCoderSubmission) bool {
@@ -393,11 +403,6 @@ func archiveCmd() {
 		}
 		return true
 	}).([]AtCoderSubmission)
-
-	//rev sort by EpochSecond
-	sort.Slice(ss, func(i, j int) bool {
-		return ss[i].EpochSecond > ss[j].EpochSecond
-	})
 
 	//filter latest submission for each problem
 	v := map[string]struct{}{}
@@ -503,7 +508,27 @@ func archiveCmd() {
 			return
 		})
 	})
+
+	if len(ss) == 0 {
+		return false, 0
+	}
+
+	return true, lastSubmissionEpochSecond
 }
+
+func archiveEachCmd() {
+	unixSecond := int64(0)
+	for {
+		res, nextUnixSecond := archiveCmd(unixSecond)
+		time.Sleep(time.Second * 2)
+		log.Printf(strconv.FormatInt(nextUnixSecond, 10))
+		if !res {
+			break
+		}
+		unixSecond = nextUnixSecond
+	}
+}
+
 func validateConfig(config Config) bool {
 	//TODO check path
 	return false
@@ -543,7 +568,7 @@ func main() {
 				Aliases: []string{"a"},
 				Usage:   "archive your AC submissions",
 				Action: func(c *cli.Context) error {
-					archiveCmd()
+					archiveEachCmd()
 					return nil
 				},
 			},
